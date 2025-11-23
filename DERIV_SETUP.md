@@ -16,28 +16,16 @@ Before the login will work, you must configure your OAuth redirect URL in your D
    - Click "Edit" or "Manage"
 
 3. **Add Redirect URLs**
-   You need to add BOTH of these URLs:
-   
-   **For Development/Preview:**
-   ```
-   https://[your-project-id].lovableproject.com/callback
-   ```
-   
-   **For Production (if deployed):**
-   ```
-   https://makotipredictor.lovable.app/callback
-   ```
-   
-   **For Custom Domain (if configured):**
-   ```
-   https://yourdomain.com/callback
-   ```
+   You need to add the redirect URL for your application. The URL will depend on where you are running your application. The format is typically `[your-app-url]/callback`.
+
+   For example:
+   *   **For GitHub Codespaces:** The URL will be provided to you when you run the application. It will look something like `https://[codespace-name]-[port].preview.app.github.dev/callback`.
+   *   **For a custom domain:** `https://yourdomain.com/callback`
 
 4. **Website URL Field**
-   Set this to your main domain (without /callback):
-   - Development: `https://[your-project-id].lovableproject.com`
-   - Production: `https://makotipredictor.lovable.app`
-   - Custom: `https://yourdomain.com`
+   Set this to your main domain (without /callback).
+    *   **For GitHub Codespaces:** `https://[codespace-name]-[port].preview.app.github.dev`
+    *   **For a custom domain:** `https://yourdomain.com`
 
 5. **Save Changes**
    Click "Update" or "Save" to apply the changes
