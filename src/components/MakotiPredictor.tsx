@@ -75,6 +75,7 @@ export const MakotiPredictor = () => {
             </>
           ) : (
             <div className="text-2xl text-muted-foreground">
+              <img src="/makoti-logo.png" alt="Makoti Predictor" className="h-24 w-24 mx-auto mb-4" />
               Press Scan to analyze
             </div>
           )}

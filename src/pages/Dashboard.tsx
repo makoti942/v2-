@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useDerivAuth } from '@/hooks/useDerivAuth';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -8,13 +8,14 @@ import { useNavigate } from 'react-router-dom';
 import { InstallPrompt } from '@/components/InstallPrompt';
 import MakotiPredictor from '@/components/MakotiPredictor';
 import BotBuilder from '@/components/BotBuilder';
-import { BlocklyBotBuilder } from '@/components/BlocklyBotBuilder';
 import { OtherMarketsTab } from '@/components/OtherMarketsTab';
+import WelcomeAnimation from '@/components/WelcomeAnimation';
 
 const Dashboard = () => {
   const { user, logout, switchAccount, resetBalance } = useAuth();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('predictor');
+  const [showWelcome, setShowWelcome] = useState(true);
   
   // Connect to Deriv API and get balance
   useDerivAuth();
@@ -23,6 +24,10 @@ const Dashboard = () => {
     logout();
     navigate('/login');
   };
+
+  if (showWelcome) {
+    return <WelcomeAnimation onAnimationEnd={() => setShowWelcome(false)} />;
+  }
 
   if (!user) return null;
 
@@ -35,7 +40,7 @@ const Dashboard = () => {
       <header className="border-b border-border bg-card/50 backdrop-blur">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <img src="/candle-icon-512.png" alt="Makoti" className="h-8 w-8" />
+            <img src="/makoti-logo.png" alt="Makoti Predictor" className="h-8 w-8" />
             <h1 className="text-2xl font-bold text-primary glow mono">
               MAKOTI PREDICTOR
             </h1>
@@ -93,10 +98,9 @@ const Dashboard = () => {
       {/* Main Content */}
       <div className="max-w-7xl mx-auto p-4">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full max-w-4xl mx-auto grid-cols-4 mb-6">
+          <TabsList className="grid w-full max-w-4xl mx-auto grid-cols-3 mb-6">
             <TabsTrigger value="predictor">Predictor</TabsTrigger>
             <TabsTrigger value="bot">Simple Bot</TabsTrigger>
-            <TabsTrigger value="blockly-bot">Blockly Bot</TabsTrigger>
             <TabsTrigger value="other-markets">Other Markets</TabsTrigger>
           </TabsList>
           
@@ -106,10 +110,6 @@ const Dashboard = () => {
           
           <TabsContent value="bot">
             <BotBuilder />
-          </TabsContent>
-          
-          <TabsContent value="blockly-bot">
-            <BlocklyBotBuilder />
           </TabsContent>
           
           <TabsContent value="other-markets">

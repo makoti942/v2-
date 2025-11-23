@@ -42,39 +42,17 @@ export const useBotTrading = (onLog: (message: string) => void) => {
   const martingaleMultiplierRef = useRef<number>(2);
   const maxStakeRef = useRef<number>(100);
 
-  // Safe send with readyState check and timeout
   const safeSend = useCallback((payload: any): Promise<boolean> => {
     return new Promise((resolve) => {
-      if (!wsRef.current) {
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
         resolve(false);
         return;
       }
-
-      if (wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify(payload));
-        resolve(true);
-        return;
-      }
-
-      // Wait for connection with timeout
-      let timeout: NodeJS.Timeout;
-      const checkReady = setInterval(() => {
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-          clearInterval(checkReady);
-          clearTimeout(timeout);
-          wsRef.current.send(JSON.stringify(payload));
-          resolve(true);
-        }
-      }, 100);
-
-      timeout = setTimeout(() => {
-        clearInterval(checkReady);
-        resolve(false);
-      }, 4000);
+      wsRef.current.send(JSON.stringify(payload));
+      resolve(true);
     });
   }, []);
 
-  // Wait for specific message with timeout
   const waitForMessage = useCallback((predicate: (data: any) => boolean, timeoutMs: number): Promise<any> => {
     return new Promise((resolve) => {
       let timeout: NodeJS.Timeout;
@@ -97,164 +75,177 @@ export const useBotTrading = (onLog: (message: string) => void) => {
         if (index > -1) {
           messageListenersRef.current.splice(index, 1);
         }
-        resolve(null);
+        resolve(null); // Resolve with null on timeout
       }, timeoutMs);
     });
   }, []);
 
-  // Apply Martingale logic
   const applyMartingale = useCallback((isWin: boolean) => {
     if (isWin) {
       currentStakeRef.current = baseStakeRef.current;
       onLog(`💰 Stake reset to base: ${currentStakeRef.current.toFixed(2)}`);
     } else {
       const newStake = currentStakeRef.current * martingaleMultiplierRef.current;
-      const cappedStake = Math.min(newStake, maxStakeRef.current);
+      currentStakeRef.current = Math.min(newStake, maxStakeRef.current);
       
-      if (cappedStake >= maxStakeRef.current) {
+      if (currentStakeRef.current >= maxStakeRef.current) {
         onLog(`⚠️ Martingale stake capped at max: ${maxStakeRef.current.toFixed(2)}`);
       }
-      
-      currentStakeRef.current = cappedStake;
-      onLog(`📈 Martingale stake updated: ${currentStakeRef.current.toFixed(2)} (${martingaleMultiplierRef.current}x multiplier)`);
+      onLog(`📈 Martingale stake updated: ${currentStakeRef.current.toFixed(2)}`);
     }
   }, [onLog]);
 
-  // Main proposal and buy flow
-  const sendProposalAndBuy = useCallback(async (config: BotConfig, retryCount = 0): Promise<void> => {
-    if (!wsRef.current || !isRunning) return;
+  const stop = useCallback((reason?: string) => {
+    if (!isRunning) return;
+    setIsRunning(false);
+    const finalReason = reason || 'Bot stopped by user';
+    onLog(`🛑 ${finalReason}`);
 
+    if (wsRef.current) {
+        if (wsRef.current.readyState === WebSocket.OPEN) {
+            safeSend({ forget_all: 'ticks' });
+        }
+        wsRef.current.close();
+        wsRef.current = null;
+    }
+
+    configRef.current = null;
+    isExecutingRef.current = false;
+    
+    const totalTrades = trades.length;
+    const wins = trades.filter(t => t.status === 'won').length;
+    const winRate = totalTrades > 0 ? ((wins / totalTrades) * 100).toFixed(1) : '0';
+    onLog(`📊 Summary: ${totalTrades} trades | Win rate: ${winRate}% | Total P/L: ${totalProfitRef.current.toFixed(2)}`);
+  }, [isRunning, onLog, trades, safeSend]);
+
+
+  const sendProposalAndBuy = useCallback(async (retryCount = 0): Promise<void> => {
+    if (!isRunning || !configRef.current) return;
+
+    const config = configRef.current;
     const balance = user?.balance || 0;
     const stakeToUse = currentStakeRef.current;
 
     if (balance < stakeToUse) {
-      onLog(`⚠️ Insufficient balance: ${balance.toFixed(2)} ${user?.activeAccount.currency}`);
-      stop();
+      stop('Insufficient balance');
       return;
     }
 
-    // Build contract type
-    let contractType = 'DIGITMATCH';
-    let selectedDigit = config.digit;
-    
-    if (config.contractType.toLowerCase().includes('match')) {
-      contractType = 'DIGITMATCH';
-    } else if (config.contractType.toLowerCase().includes('differ')) {
-      contractType = 'DIGITDIFF';
-    } else if (config.contractType.toLowerCase().includes('even')) {
-      contractType = 'DIGITEVEN';
-      selectedDigit = undefined;
-    } else if (config.contractType.toLowerCase().includes('odd')) {
-      contractType = 'DIGITODD';
-      selectedDigit = undefined;
-    } else if (config.contractType.toLowerCase().includes('over')) {
-      contractType = 'DIGITOVER';
-    } else if (config.contractType.toLowerCase().includes('under')) {
-      contractType = 'DIGITUNDER';
+    let apiContractType = '';
+    switch (config.contractType) {
+      case 'Digit Matches': apiContractType = 'DIGITMATCH'; break;
+      case 'Digit Differs': apiContractType = 'DIGITDIFF'; break;
+      case 'Digit Even': apiContractType = 'DIGITEVEN'; break;
+      case 'Digit Odd': apiContractType = 'DIGITODD'; break;
+      case 'Digit Over': apiContractType = 'DIGITOVER'; break;
+      case 'Digit Under': apiContractType = 'DIGITUNDER'; break;
+      default: stop(`Unknown contract type: ${config.contractType}`); return;
     }
 
-    // Build proposal payload
     const proposalParams: any = {
-      proposal: 1,
-      amount: stakeToUse,
-      basis: 'stake',
-      contract_type: contractType,
-      currency: user!.activeAccount.currency,
-      duration: config.duration,
-      duration_unit: 't',
-      symbol: config.market
+      proposal: 1, amount: stakeToUse, basis: 'stake', contract_type: apiContractType,
+      currency: user!.activeAccount.currency, duration: config.duration, duration_unit: 't', symbol: config.market
     };
 
-    if (selectedDigit !== undefined && 
-        (contractType === 'DIGITMATCH' || contractType === 'DIGITDIFF' || 
-         contractType === 'DIGITOVER' || contractType === 'DIGITUNDER')) {
-      proposalParams.barrier = selectedDigit.toString();
+    if (config.digit !== undefined && ['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER'].includes(apiContractType)) {
+      proposalParams.barrier = config.digit.toString();
     }
 
-    onLog(`📤 Proposal sent (stake: ${stakeToUse.toFixed(2)}, type: ${contractType})`);
-
-    // Send proposal
+    onLog(`📤 Sending proposal (Stake: ${stakeToUse.toFixed(2)})`);
     const sent = await safeSend(proposalParams);
     if (!sent) {
-      onLog(`❌ Failed to send proposal`);
       if (retryCount < MAX_RETRIES) {
-        onLog(`🔄 Retrying... (${retryCount + 1}/${MAX_RETRIES})`);
-        await sendProposalAndBuy(config, retryCount + 1);
+        onLog(`🔄 Retrying proposal... (${retryCount + 1}/${MAX_RETRIES})`);
+        setTimeout(() => sendProposalAndBuy(retryCount + 1), 500);
+      } else {
+        stop('Failed to send proposal');
       }
       return;
     }
 
-    // Wait for proposal response
-    const proposalMsg = await waitForMessage(
-      (data) => data.proposal !== undefined,
-      PROPOSAL_TIMEOUT_MS
-    );
-
+    const proposalMsg = await waitForMessage((data) => data.proposal !== undefined, PROPOSAL_TIMEOUT_MS);
     if (!proposalMsg) {
-      onLog(`⏱️ Proposal timeout`);
-      if (retryCount < MAX_RETRIES) {
-        onLog(`🔄 Retrying... (${retryCount + 1}/${MAX_RETRIES})`);
-        await sendProposalAndBuy(config, retryCount + 1);
-      }
-      return;
+        if (retryCount < MAX_RETRIES) {
+            onLog(`🔄 Retrying proposal (timeout)... (${retryCount + 1}/${MAX_RETRIES})`);
+            setTimeout(() => sendProposalAndBuy(retryCount + 1), 500);
+        } else {
+            stop('Proposal timeout');
+        }
+        return;
     }
 
-    const proposalId = proposalMsg.proposal.id;
-    const askPrice = Number(proposalMsg.proposal.ask_price || proposalMsg.proposal.display_value);
-    onLog(`✅ Proposal received (id: ${proposalId}, ask: ${askPrice.toFixed(2)} ${user!.activeAccount.currency})`);
+    const { id: proposalId, ask_price } = proposalMsg.proposal;
+    onLog(`✅ Proposal received (ID: ${proposalId})`);
 
-    // Send buy
-    onLog(`📤 Buy sent (proposal id: ${proposalId})`);
-    const buySent = await safeSend({ buy: proposalId, price: askPrice });
-    
+    const buySent = await safeSend({ buy: proposalId, price: ask_price });
     if (!buySent) {
-      onLog(`❌ Failed to send buy`);
+      stop('Failed to send buy request');
       return;
     }
 
-    // Wait for buy confirmation
-    const buyMsg = await waitForMessage(
-      (data) => data.buy !== undefined || data.error?.code === 'ContractCreationFailure',
-      BUY_TIMEOUT_MS
-    );
-
+    const buyMsg = await waitForMessage((data) => data.buy !== undefined || data.error?.code === 'ContractCreationFailure', BUY_TIMEOUT_MS);
     if (!buyMsg || buyMsg.error) {
-      onLog(`❌ Buy failed or timeout`);
+      onLog(`❌ Buy failed: ${buyMsg?.error?.message || 'Timeout'}`);
+      // Don't stop the bot, just log failure and continue
+       isExecutingRef.current = false;
+       if (isRunning && !configRef.current?.tradeOnEveryTick) {
+            // Immediately try to trade again
+            if(!isExecutingRef.current) {
+                isExecutingRef.current = true;
+                sendProposalAndBuy().finally(() => { isExecutingRef.current = false; });
+            }
+       }
       return;
     }
 
-    const contract = buyMsg.buy;
-    onLog(`✅ Buy accepted! Contract: ${contract.contract_id}`);
-    onLog(`💰 Stake: ${contract.buy_price} ${user!.activeAccount.currency}`);
-    
-    activeContractsRef.current.add(contract.contract_id);
-    
-    setTrades(prev => [...prev, {
-      contractId: contract.contract_id,
-      buyPrice: Number(contract.buy_price),
-      status: 'open',
-      timestamp: Date.now()
-    }]);
+    const { contract_id, buy_price } = buyMsg.buy;
+    onLog(`✅ Trade purchased (ID: ${contract_id})`);
+    activeContractsRef.current.add(contract_id);
+    setTrades(prev => [...prev, { contractId: contract_id, buyPrice: Number(buy_price), status: 'open', timestamp: Date.now() }]);
 
-    // Subscribe to contract updates
-    await safeSend({
-      proposal_open_contract: 1,
-      contract_id: contract.contract_id,
-      subscribe: 1
-    });
-  }, [user, onLog, isRunning, safeSend, waitForMessage, applyMartingale]);
+    await safeSend({ proposal_open_contract: 1, contract_id: contract_id, subscribe: 1 });
+  }, [user, onLog, isRunning, safeSend, waitForMessage, applyMartingale, stop]);
+
+
+  const handleTradeFinished = useCallback((contract: any) => {
+    if (!activeContractsRef.current.has(contract.contract_id)) return;
+
+    const profit = Number(contract.profit);
+    totalProfitRef.current += profit;
+    
+    setTrades(prev => prev.map(t => t.contractId === contract.contract_id ? { ...t, sellPrice: Number(contract.sell_price), profit, status: profit >= 0 ? 'won' : 'lost' } : t));
+    activeContractsRef.current.delete(contract.contract_id);
+
+    const isWin = profit >= 0;
+    onLog(`${isWin ? '🎉 WON' : '❌ LOST'}: ${profit.toFixed(2)} ${user!.activeAccount.currency} | Total P/L: ${totalProfitRef.current.toFixed(2)}`);
+
+    applyMartingale(isWin);
+
+    if (configRef.current) {
+        if (totalProfitRef.current >= configRef.current.takeProfit) {
+            stop('Take Profit reached');
+            return;
+        }
+        if (totalProfitRef.current <= -configRef.current.stopLoss) {
+            stop('Stop Loss reached');
+            return;
+        }
+    }
+
+    // If not trading on every tick, trigger the next trade immediately after the previous one finishes.
+    if (isRunning && !isExecutingRef.current && !configRef.current?.tradeOnEveryTick) {
+        isExecutingRef.current = true;
+        sendProposalAndBuy().finally(() => {
+            isExecutingRef.current = false;
+        });
+    }
+  }, [user, applyMartingale, stop, sendProposalAndBuy, isRunning]);
 
   const connect = useCallback(() => {
-    if (!user) return;
+    if (!user || !configRef.current) return;
 
-    // Reuse existing connection if already open
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      onLog('⚡ Using existing connection');
-      return;
-    }
-
-    const ws = new WebSocket('wss://ws.derivws.com/websockets/v3?app_id=109236');
-    wsRef.current = ws;
+    wsRef.current = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${process.env.REACT_APP_DERIV_APP_ID || '109236'}`);
+    const ws = wsRef.current;
 
     ws.onopen = async () => {
       onLog('⚡ Connected to Deriv');
@@ -264,169 +255,79 @@ export const useBotTrading = (onLog: (message: string) => void) => {
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
 
-      // Notify all listeners
-      messageListenersRef.current.forEach(listener => listener(data));
+      messageListenersRef.current.forEach(l => l(data));
+
+      if (data.error) {
+        onLog(`❌ API Error: ${data.error.message}`);
+        if (data.error.code === 'InvalidToken' || data.error.code === 'AuthorizationRequired') {
+            stop('Authorization failed');
+        }
+        return;
+      }
 
       if (data.authorize) {
         onLog(`✅ Authorized: ${data.authorize.loginid}`);
-        const balance = Number(data.authorize.balance);
-        updateBalance(balance);
-        
+        updateBalance(Number(data.authorize.balance));
         safeSend({ balance: 1, subscribe: 1 });
-        
-        if (configRef.current) {
-          safeSend({ ticks: configRef.current.market, subscribe: 1 });
-          onLog(`📊 Subscribed to ${configRef.current.market} ticks`);
-          
-          // Start first trade immediately
-          if (!isExecutingRef.current) {
-            isExecutingRef.current = true;
-            sendProposalAndBuy(configRef.current).finally(() => {
-              isExecutingRef.current = false;
-            });
-          }
-        }
+        safeSend({ ticks: configRef.current!.market, subscribe: 1 });
       }
 
       if (data.balance) {
         updateBalance(Number(data.balance.balance));
       }
 
-      if (data.proposal_open_contract) {
-        const contract = data.proposal_open_contract;
-        
-        if (contract.is_sold || contract.status === 'sold') {
-          const profit = Number(contract.profit);
-          const sellPrice = Number(contract.sell_price);
-          
-          totalProfitRef.current += profit;
-          
-          setTrades(prev => prev.map(t => 
-            t.contractId === contract.contract_id 
-              ? { 
-                  ...t, 
-                  sellPrice,
-                  profit,
-                  status: profit > 0 ? 'won' : 'lost'
-                }
-              : t
-          ));
-
-          activeContractsRef.current.delete(contract.contract_id);
-
-          const isWin = profit > 0;
-          if (isWin) {
-            onLog(`🎉 WON! Profit: +${profit.toFixed(2)} ${user.activeAccount.currency} | Total: ${totalProfitRef.current.toFixed(2)}`);
-          } else {
-            onLog(`❌ LOST! Loss: ${profit.toFixed(2)} ${user.activeAccount.currency} | Total: ${totalProfitRef.current.toFixed(2)}`);
-          }
-
-          // Apply Martingale
-          applyMartingale(isWin);
-
-          // Check stop conditions
-          if (configRef.current) {
-            if (totalProfitRef.current >= configRef.current.takeProfit) {
-              onLog(`🎯 Take Profit reached! Total: +${totalProfitRef.current.toFixed(2)} ${user.activeAccount.currency}`);
-              stop();
-              return;
-            }
-            
-            if (totalProfitRef.current <= -configRef.current.stopLoss) {
-              onLog(`🛑 Stop Loss reached! Total: ${totalProfitRef.current.toFixed(2)} ${user.activeAccount.currency}`);
-              stop();
-              return;
-            }
-          }
-
-          // Continue trading
-          if (isRunning && configRef.current && !isExecutingRef.current) {
-            isExecutingRef.current = true;
-            setTimeout(() => {
-              if (configRef.current) {
-                sendProposalAndBuy(configRef.current).finally(() => {
-                  isExecutingRef.current = false;
-                });
-              }
-            }, 500);
-          }
+      if (data.ticks && !isExecutingRef.current) {
+        if (configRef.current?.tradeOnEveryTick || trades.length === 0) {
+          isExecutingRef.current = true;
+          sendProposalAndBuy().finally(() => {
+            isExecutingRef.current = false;
+          });
         }
       }
 
-      if (data.error) {
-        onLog(`❌ Error: ${data.error.message}`);
-        console.error('Trading error:', data.error);
-        isExecutingRef.current = false;
+      if (data.proposal_open_contract && data.proposal_open_contract.is_sold) {
+        handleTradeFinished(data.proposal_open_contract);
       }
     };
 
     ws.onerror = (error) => {
-      console.error('Trading WebSocket error:', error);
-      onLog('⚠️ Connection error - attempting reconnect...');
+      console.error('WebSocket error:', error);
+      onLog('⚠️ Connection error');
     };
 
     ws.onclose = () => {
       onLog('❌ Connection closed');
-      if (isRunning && configRef.current) {
-        setTimeout(() => {
-          onLog('🔄 Reconnecting...');
-          connect();
-        }, 3000);
+      if (isRunning) {
+        setTimeout(() => { onLog('🔄 Reconnecting...'); connect(); }, 3000);
       }
     };
-  }, [user, updateBalance, onLog, safeSend, waitForMessage, sendProposalAndBuy, applyMartingale, isRunning]);
-
+  }, [user, updateBalance, onLog, safeSend, isRunning, stop, sendProposalAndBuy, handleTradeFinished, trades]);
 
   const start = useCallback((config: BotConfig) => {
     setIsRunning(true);
+    setTrades([]);
     activeContractsRef.current.clear();
     messageListenersRef.current = [];
     configRef.current = config;
     totalProfitRef.current = 0;
     isExecutingRef.current = false;
     
-    // Set Martingale parameters
     baseStakeRef.current = config.stake;
     currentStakeRef.current = config.stake;
     martingaleMultiplierRef.current = config.martingaleMultiplier || 2;
     maxStakeRef.current = config.maxStake || 100;
     
     onLog('🚀 Starting bot...');
-    onLog(`💰 Base Stake: ${config.stake} | TP: ${config.takeProfit} | SL: ${config.stopLoss}`);
-    onLog(`📈 Martingale: ${martingaleMultiplierRef.current}x multiplier, max: ${maxStakeRef.current}`);
+    onLog(`💰 Config: Stake ${config.stake} | TP ${config.takeProfit} | SL ${config.stopLoss}`);
+    onLog(`📈 Martingale: ${martingaleMultiplierRef.current}x, max ${maxStakeRef.current}`);
     
     connect();
   }, [connect, onLog]);
-
-  const stop = useCallback(() => {
-    setIsRunning(false);
-    configRef.current = null;
-    isExecutingRef.current = false;
-    messageListenersRef.current = [];
-    
-    // Keep WebSocket alive for faster reconnection
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      safeSend({ forget_all: 'ticks' });
-    }
-    
-    const totalTrades = trades.length;
-    const wins = trades.filter(t => t.status === 'won').length;
-    const winRate = totalTrades > 0 ? ((wins / totalTrades) * 100).toFixed(1) : '0';
-    
-    onLog('🛑 Bot stopped');
-    onLog(`📊 Summary: ${totalTrades} trades | Win rate: ${winRate}% | Total P/L: ${totalProfitRef.current.toFixed(2)}`);
-  }, [onLog, trades, safeSend]);
 
   const resetTrades = useCallback(() => {
     setTrades([]);
     totalProfitRef.current = 0;
   }, []);
 
-  return {
-    isRunning,
-    trades,
-    start,
-    stop,
-    resetTrades
-  };
+  return { isRunning, trades, start, stop, resetTrades };
 };

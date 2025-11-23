@@ -8,42 +8,42 @@ All colors MUST be HSL.
 
 @layer base {
   :root {
-    --background: 240 10% 3.9%;
-    --foreground: 180 100% 90%;
+    --background: 0 0% 2%;
+    --foreground: 120 100% 50%;
 
-    --card: 240 10% 5%;
-    --card-foreground: 180 100% 90%;
+    --card: 0 0% 4%;
+    --card-foreground: 120 100% 50%;
 
-    --popover: 240 10% 5%;
-    --popover-foreground: 180 100% 90%;
+    --popover: 0 0% 4%;
+    --popover-foreground: 120 100% 50%;
 
-    --primary: 180 100% 50%;
-    --primary-foreground: 240 10% 3.9%;
+    --primary: 120 100% 50%;
+    --primary-foreground: 0 0% 2%;
 
-    --secondary: 240 5% 10%;
-    --secondary-foreground: 180 100% 90%;
+    --secondary: 0 0% 8%;
+    --secondary-foreground: 120 100% 50%;
 
-    --muted: 240 5% 15%;
-    --muted-foreground: 180 20% 60%;
+    --muted: 0 0% 12%;
+    --muted-foreground: 120 50% 30%;
 
-    --accent: 158 100% 50%;
-    --accent-foreground: 240 10% 3.9%;
+    --accent: 100 100% 50%;
+    --accent-foreground: 0 0% 2%;
 
     --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 180 100% 90%;
+    --destructive-foreground: 0 0% 90%;
 
-    --border: 240 10% 15%;
-    --input: 240 10% 12%;
-    --ring: 180 100% 50%;
+    --border: 120 50% 15%;
+    --input: 120 50% 10%;
+    --ring: 120 100% 60%;
 
     --radius: 0.5rem;
 
-    --glow: 180 100% 50%;
-    --glow-accent: 158 100% 50%;
+    --glow: 120 100% 50%;
+    --glow-accent: 100 100% 50%;
     
-    --gradient-terminal: linear-gradient(135deg, hsl(240 10% 3.9%), hsl(240 10% 8%));
-    --gradient-panel: linear-gradient(180deg, hsl(240 10% 5%), hsl(240 10% 3.9%));
-    --gradient-scan: linear-gradient(90deg, hsl(180 100% 50%), hsl(158 100% 50%));
+    --gradient-terminal: linear-gradient(135deg, hsl(0 0% 2%), hsl(0 0% 5%));
+    --gradient-panel: linear-gradient(180deg, hsl(0 0% 4%), hsl(0 0% 2%));
+    --gradient-scan: linear-gradient(90deg, hsl(120 100% 50%), hsl(100 100% 50%));
   }
 }
 
@@ -62,19 +62,37 @@ All colors MUST be HSL.
   }
 
   .glow {
-    text-shadow: 0 0 10px hsl(var(--glow) / 0.5), 0 0 20px hsl(var(--glow) / 0.3);
+    text-shadow: 0 0 10px hsl(var(--glow) / 0.7), 0 0 20px hsl(var(--glow) / 0.4);
   }
 
   .glow-accent {
-    text-shadow: 0 0 10px hsl(var(--glow-accent) / 0.5), 0 0 20px hsl(var(--glow-accent) / 0.3);
+    text-shadow: 0 0 10px hsl(var(--glow-accent) / 0.7), 0 0 20px hsl(var(--glow-accent) / 0.4);
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes fadeOut {
+    from { opacity: 1; }
+    to { opacity: 0; }
+  }
+
+  .animate-fadeIn {
+    animation: fadeIn 1s ease-in-out;
+  }
+
+  .animate-fadeOut {
+    animation: fadeOut 1s ease-in-out;
   }
 
   @keyframes pulse-glow {
     0%, 100% {
-      box-shadow: 0 0 20px hsl(var(--glow) / 0.3);
+      text-shadow: 0 0 10px hsl(var(--glow) / 0.7), 0 0 20px hsl(var(--glow) / 0.4);
     }
     50% {
-      box-shadow: 0 0 40px hsl(var(--glow) / 0.6);
+      text-shadow: 0 0 20px hsl(var(--glow) / 1), 0 0 40px hsl(var(--glow) / 0.7);
     }
   }
 
@@ -88,7 +106,7 @@ All colors MUST be HSL.
   }
 
   .animate-pulse-glow {
-    animation: pulse-glow 2s ease-in-out infinite;
+    animation: pulse-glow 1.5s ease-in-out infinite;
   }
 
   .animate-scan {
